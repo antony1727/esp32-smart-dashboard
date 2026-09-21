@@ -94,7 +94,7 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
   uint32_t h = (area->y2 - area->y1 + 1);
   tft.startWrite();
   tft.setAddrWindow(area->x1, area->y1, w, h);
-  tft.pushImage(area->x1, area->y1, w, h, (lgfx::rgb565_t *)&color_p->full);
+  tft.writePixels((lgfx::rgb565_t *)&color_p->full, w * h);
   tft.endWrite();
   lv_disp_flush_ready(disp);
 }
@@ -922,9 +922,10 @@ void setup() {
 
   lv_init();
   size_t buf_size = 800 * BUF_LINES * sizeof(lv_color_t);
-  buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  buf2 = nullptr;
+  buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+  buf2 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
   if (!buf1) buf1 = (lv_color_t *)malloc(buf_size);
+  if (!buf2) buf2 = (lv_color_t *)malloc(buf_size);
 
   lv_disp_draw_buf_init(&draw_buf, buf1, buf2, 800 * BUF_LINES);
 
