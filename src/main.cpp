@@ -14,7 +14,7 @@ LGFX tft;
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t *buf1 = nullptr;
 static lv_color_t *buf2 = nullptr;
-#define BUF_LINES 32 // 800*32 = 25600 px ~50KB
+#define BUF_LINES 32 // 800*32 = 25600 px ~51KB (IRAM)
 
 // UI Widgets - Left Panel (Painel Unificado)
 static lv_obj_t *time_label = nullptr;
@@ -92,17 +92,14 @@ String sanitize_for_lvgl(String str) {
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
   uint32_t w = (area->x2 - area->x1 + 1);
   uint32_t h = (area->y2 - area->y1 + 1);
-  tft.startWrite();
-  tft.setAddrWindow(area->x1, area->y1, w, h);
-  tft.writePixels((lgfx::rgb565_t *)&color_p->full, w * h);
-  tft.endWrite();
+  tft.pushImage(area->x1, area->y1, w, h, (lgfx::rgb565_t *)&color_p->full);
   lv_disp_flush_ready(disp);
 }
 
-void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
+void my_touch_read(lv_indev_drv_t *indev, lv_indev_data_t *data) {
   uint16_t x, y;
   if (tft.getTouch(&x, &y)) {
-    data->state = LV_INDEV_STATE_PR;
+    data->state = LV_INDEV_STATE_PRESSED;
     data->point.x = x;
     data->point.y = y;
   } else {
@@ -194,7 +191,7 @@ void render_currency_icon(lv_obj_t *parent, const char* pair) {
       }
     }
   }
-  // 3. ETH - Moeda Circular Escura com Cristal/Losango 3D Ethereum
+  // 3. ETH - Moeda Circular Escura com Cristal 3D Ethereum (sem transform layer para estabilidade total)
   else if (strstr(pair, "ETH")) {
     lv_obj_t *circle = lv_obj_create(parent);
     lv_obj_set_size(circle, 44, 44);
@@ -206,23 +203,25 @@ void render_currency_icon(lv_obj_t *parent, const char* pair) {
     lv_obj_set_style_pad_all(circle, 0, 0);
     lv_obj_clear_flag(circle, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Losango superior em relevo
-    lv_obj_t *diamond1 = lv_obj_create(circle);
-    lv_obj_set_size(diamond1, 16, 16);
-    lv_obj_align(diamond1, LV_ALIGN_CENTER, 0, -2);
-    lv_obj_set_style_bg_color(diamond1, lv_color_hex(0xE2E8F0), 0);
-    lv_obj_set_style_transform_angle(diamond1, 450, 0); // 45 graus
-    lv_obj_set_style_border_width(diamond1, 0, 0);
-    lv_obj_clear_flag(diamond1, LV_OBJ_FLAG_SCROLLABLE);
+    // Geometria precisa do diamante Ethereum usando linhas nativas
+    static const lv_point_t eth_top[] = {{22, 8}, {31, 21}, {22, 26}, {13, 21}, {22, 8}};
+    static const lv_point_t eth_bot[] = {{13, 23}, {22, 36}, {31, 23}};
+    static const lv_point_t eth_mid[] = {{22, 8}, {22, 26}};
 
-    // Divisão facetada inferior
-    lv_obj_t *diamond2 = lv_obj_create(circle);
-    lv_obj_set_size(diamond2, 10, 10);
-    lv_obj_align(diamond2, LV_ALIGN_CENTER, 0, 8);
-    lv_obj_set_style_bg_color(diamond2, lv_color_hex(0x94A3B8), 0);
-    lv_obj_set_style_transform_angle(diamond2, 450, 0);
-    lv_obj_set_style_border_width(diamond2, 0, 0);
-    lv_obj_clear_flag(diamond2, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *l_top = lv_line_create(circle);
+    lv_line_set_points(l_top, eth_top, 5);
+    lv_obj_set_style_line_color(l_top, lv_color_hex(0xE2E8F0), 0);
+    lv_obj_set_style_line_width(l_top, 2, 0);
+
+    lv_obj_t *l_bot = lv_line_create(circle);
+    lv_line_set_points(l_bot, eth_bot, 3);
+    lv_obj_set_style_line_color(l_bot, lv_color_hex(0x94A3B8), 0);
+    lv_obj_set_style_line_width(l_bot, 2, 0);
+
+    lv_obj_t *l_mid = lv_line_create(circle);
+    lv_line_set_points(l_mid, eth_mid, 2);
+    lv_obj_set_style_line_color(l_mid, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_line_width(l_mid, 1, 0);
   }
   // 4. EUR - Moeda Circular Azul Real com Círculo de Estrelas Douradas da União Europeia
   else if (strstr(pair, "EUR")) {
@@ -346,7 +345,7 @@ void render_weather_icon(lv_obj_t *parent, int wcode) {
   lv_obj_set_style_border_width(cHighlight, 0, 0);
   lv_obj_clear_flag(cHighlight, LV_OBJ_FLAG_SCROLLABLE);
 
-  // 3. Fileiras de Gotas de Chuva Caindo (exatamente como na imagem)
+  // 3. Fileiras de Gotas de Chuva Caindo
   if (isRain) {
     const int dropX[6] = {16, 24, 32, 40, 48, 56};
     const int dropY[6] = {48, 54, 49, 55, 50, 53};
@@ -440,6 +439,30 @@ void create_ui() {
   lv_obj_t *scr = lv_scr_act();
   lv_obj_clean(scr);
 
+  // Reset de todos os ponteiros de widgets para evitar dangling pointers
+  time_label = nullptr;
+  date_label = nullptr;
+  weather_temp_label = nullptr;
+  weather_city_label = nullptr;
+  weather_icon_box = nullptr;
+  bottom_wifi_label = nullptr;
+  bottom_version_label = nullptr;
+  for (int i = 0; i < 4; i++) {
+    moeda_cards[i] = nullptr;
+    moeda_pair_labels[i] = nullptr;
+    moeda_sub_labels[i] = nullptr;
+    moeda_value_labels[i] = nullptr;
+    moeda_pct_labels[i] = nullptr;
+    moeda_icon_boxes[i] = nullptr;
+    moeda_lines[i] = nullptr;
+    wifi_bars[i] = nullptr;
+  }
+  for (int i = 0; i < 6; i++) {
+    forecast_day_labels[i] = nullptr;
+    forecast_icon_boxes[i] = nullptr;
+    forecast_temp_labels[i] = nullptr;
+  }
+
   // Fundo Preto Profundo / Automotivo do Painel
   lv_color_t colBg = lv_color_hex(0x0A0E17);
   lv_color_t colCard = lv_color_hex(0x101522);
@@ -451,7 +474,7 @@ void create_ui() {
   lv_obj_set_style_bg_color(scr, colBg, 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-  // Linhas diagonais decorativas sutis no fundo (estilo fibra de carbono da foto)
+  // Linhas diagonais decorativas sutis no fundo (estilo fibra de carbono)
   static lv_point_t diagPts1[2] = {{0, 60}, {60, 0}};
   static lv_point_t diagPts2[2] = {{0, 120}, {120, 0}};
   lv_obj_t *dLine1 = lv_line_create(scr);
@@ -917,16 +940,16 @@ void setup() {
   Serial.println("\n=== SMART DASHBOARD BOOT ===");
   loadConfig();
 
-  tft.init();
-  tft.setBrightness(gConfig.brightness);
-
   lv_init();
-  size_t buf_size = 800 * BUF_LINES * sizeof(lv_color_t);
-  buf1 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
-  buf2 = (lv_color_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
-  if (!buf1) buf1 = (lv_color_t *)malloc(buf_size);
-  if (!buf2) buf2 = (lv_color_t *)malloc(buf_size);
+  tft.init();
+  tft.setRotation(0);
+  tft.setBrightness(gConfig.brightness);
+  tft.fillScreen(TFT_BLACK);
 
+  // Buffer no IRAM interno rápido para estabilidade total contra flicker/concorrência PSRAM
+  buf1 = (lv_color_t *)heap_caps_malloc(800 * BUF_LINES * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!buf1) buf1 = (lv_color_t *)heap_caps_malloc(800 * BUF_LINES * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  buf2 = nullptr;
   lv_disp_draw_buf_init(&draw_buf, buf1, buf2, 800 * BUF_LINES);
 
   static lv_disp_drv_t disp_drv;
@@ -940,23 +963,28 @@ void setup() {
   static lv_indev_drv_t indev_drv;
   lv_indev_drv_init(&indev_drv);
   indev_drv.type = LV_INDEV_TYPE_POINTER;
-  indev_drv.read_cb = my_touchpad_read;
+  indev_drv.read_cb = my_touch_read;
   lv_indev_drv_register(&indev_drv);
 
   create_ui();
 
+  // AP de configuracao SEMPRE ligado para garantir acesso caso WiFi falhe
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setSleep(false);
+  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+  WiFi.softAP("Painel-Config", "12345678");
+
   webServerInit();
 
-  if (strlen(gConfig.wifi_ssid) > 0) {
-    Serial.printf("[WiFi] Conectando a %s...\n", gConfig.wifi_ssid);
-    WiFi.mode(WIFI_STA);
+  if (gConfig.wifi_ssid[0] != '\0') {
+    Serial.printf("[WiFi] Conectando em '%s' ...\n", gConfig.wifi_ssid);
     WiFi.begin(gConfig.wifi_ssid, gConfig.wifi_pass);
-    int wait = 0;
-    while (WiFi.status() != WL_CONNECTED && wait < 20) {
+
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
       lv_timer_handler();
       webServerLoop();
-      delay(500);
-      wait++;
+      delay(10);
     }
   }
 
